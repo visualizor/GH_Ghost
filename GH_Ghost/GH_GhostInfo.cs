@@ -10,7 +10,7 @@ namespace GH_Ghost
         {
             get
             {
-                return "GHGhost";
+                return "GH_Ghost";
             }
         }
         public override Bitmap Icon
@@ -26,7 +26,7 @@ namespace GH_Ghost
             get
             {
                 //Return a short string describing the purpose of this GHA library.
-                return "";
+                return "a single component that works other components on separate threads";
             }
         }
         public override Guid Id
@@ -42,7 +42,7 @@ namespace GH_Ghost
             get
             {
                 //Return a string identifying you or your company.
-                return "";
+                return "Will Wang";
             }
         }
         public override string AuthorContact
@@ -50,7 +50,7 @@ namespace GH_Ghost
             get
             {
                 //Return a string representing your preferred contact details.
-                return "";
+                return @"will.wang6@gmail.com";
             }
         }
     }
