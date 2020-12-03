@@ -18,7 +18,7 @@ using Rhino.NodeInCode;
 
 namespace GH_Ghost
 {
-    public class Ghost : GH_Component
+    public class Ghost : GH_Component, IGH_VariableParameterComponent
     {
         /// <summary>
         /// Each implementation of GH_Component must provide a public 
@@ -29,9 +29,43 @@ namespace GH_Ghost
         /// </summary>
         public Ghost()
           : base("Ghost Worker", "GhWkr",
-              "Run a component on another thread",
+              "Run a component on another thread from UI\nThat component will still be computed single-threaded",
               "Maths", "Script")
         {
+        }
+
+        protected ComponentFunctionInfo trgtcomp;
+        protected IGH_DocumentObject srcobj;
+        protected void UpdateCurrentParam()
+        {
+
+        }
+        protected IGH_Param MakeDummyParam(int i)
+        {
+            Param_GenericObject nxt = new Param_GenericObject
+            {
+                NickName = string.Format("P{0}", i),
+                Name = "A Parameter",
+                Description = "meaningless parameter\nset target component first",
+                Optional = true,
+                Access = GH_ParamAccess.item,
+            };
+            Params.RegisterInputParam(nxt, i);
+            return nxt;
+        }
+        protected IGH_Param CopyParam(IGH_Param parent)
+        {
+            object o = Activator.CreateInstance(parent.GetType()); //create a new instance of a type from another instance
+            var p = o as IGH_Param;
+            p.Name = parent.Name;
+            p.Description = parent.Description;
+            p.NickName = parent.NickName;
+            p.Access = GH_ParamAccess.tree;
+            p.MutableNickName = parent.MutableNickName;
+            p.Simplify = parent.Simplify;
+            p.Reverse = parent.Reverse;
+            p.Optional = parent.Optional;
+            return p;
         }
 
         /// <summary>
@@ -39,8 +73,8 @@ namespace GH_Ghost
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("Component", "C", "a single grasshopper component", GH_ParamAccess.list);
-            pManager[0].DataMapping = GH_DataMapping.Flatten;
+            pManager.AddGenericParameter("Component", "C", "link up to the single component that needs to run in parallel", GH_ParamAccess.tree);
+            pManager[0].Optional = true;
         }
 
         /// <summary>
@@ -48,7 +82,7 @@ namespace GH_Ghost
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Message", "T", "usefully information", GH_ParamAccess.item);
+            pManager.AddTextParameter("Message", "T", "usefully information", GH_ParamAccess.tree);
         }
 
         /// <summary>
@@ -58,6 +92,20 @@ namespace GH_Ghost
         /// to store data in output parameters.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
+            IGH_Param src;
+            if (Params.Input[0].SourceCount < 1) return;
+            else src = Params.Input[0].Sources[0];
+
+            srcobj = src.Attributes.GetTopLevel.DocObject;
+            string srcname = srcobj.Name.Replace(" ", string.Empty);
+            trgtcomp = Components.FindComponent(srcname);
+            if (trgtcomp==null)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, " Input is likely either a special component or from a plugin\n Cannot evaluate");
+                return;
+            }
+            
+            DA.SetData(0, trgtcomp.Name);
         }
 
 
@@ -65,34 +113,48 @@ namespace GH_Ghost
         public bool CanInsertParameter(GH_ParameterSide side, int i)
         {
             if (side == GH_ParameterSide.Input && i == Params.Input.Count) return true;
+            else if (side == GH_ParameterSide.Output && i == Params.Output.Count) return true;
             else return false;
         }
 
         public bool CanRemoveParameter(GH_ParameterSide side, int i)
         {
-            if (side == GH_ParameterSide.Input && i == Params.Input.Count - 1) return true;
+            if (side == GH_ParameterSide.Input && Params.Input.Count == 1) return false;
+            else if (side == GH_ParameterSide.Output && 1 == Params.Output.Count) return false;
+            else if (side == GH_ParameterSide.Input && i == Params.Input.Count - 1) return true;
+            else if (side == GH_ParameterSide.Output && i == Params.Output.Count - 1) return true;
             else return false;
         }
 
         public IGH_Param CreateParameter(GH_ParameterSide side, int i)
         {
-            //TODO: change implementation of this method
-            Param_GenericObject newbranch = new Param_GenericObject
+            //TODO: finish this
+            if (srcobj == null)
             {
-                NickName = string.Format("B{0}", i),
-                Name = "Branch",
-                Description = "branch to append",
-                Optional = true,
-                Access = GH_ParamAccess.tree
-            };
-            Params.RegisterInputParam(newbranch, i);
-
-            return newbranch;
+                return MakeDummyParam(i);
+            }
+            else
+            {
+                if (!(srcobj is GH_Component src))
+                    return MakeDummyParam(i);
+                else
+                    try
+                    {
+                        if (side == GH_ParameterSide.Input)
+                            return CopyParam(src.Params.Input[i - 1]);
+                        else if (side == GH_ParameterSide.Output)
+                            return CopyParam(src.Params.Output[i - 1]);
+                        else
+                            return MakeDummyParam(i);
+                    }
+                    catch { return MakeDummyParam(i); }
+            }
         }
-
+        
         public bool DestroyParameter(GH_ParameterSide side, int i)
         {
-            return side == GH_ParameterSide.Input;
+            //return side == GH_ParameterSide.Input;
+            return true;
         }
 
         public void VariableParameterMaintenance()
@@ -110,9 +172,7 @@ namespace GH_Ghost
         {
             get
             {
-                // You can add image files to your project resources and access them like this:
-                //return Resources.IconForThisComponent;
-                return null;
+                return Properties.Resources.GhostWorker;
             }
         }
 
