@@ -10,9 +10,10 @@ using Grasshopper.Kernel;
 using Grasshopper;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
-using Rhino.Geometry;
+using Grasshopper.Plugin;
 using Rhino;
 using Rhino.NodeInCode;
+using GH_IO.Serialization;
 
 // In order to load the result of this wizard, you will also need to
 // add the output bin/ folder of this project to the list of loaded
@@ -45,6 +46,7 @@ namespace GH_Ghost
         protected bool reparams = false;
         protected ComponentFunctionInfo trgtcomp;
         protected IGH_DocumentObject srcobj;
+        protected Guid srcobj_id = Guid.Empty;
         protected object[] evaluated;
         
         /// <summary>
@@ -96,7 +98,7 @@ namespace GH_Ghost
         protected void GhostEval(object[] prms)
         {
             object locker = new object();
-            if (prms.Length == 0)
+            if (prms.Length == 0 || trgtcomp==null)
             {
                 complete = true && !interrupt;
                 lock (locker) comptime = 0;
@@ -114,8 +116,9 @@ namespace GH_Ghost
                 running = true;
 
                 object[] results; // each should be a tree
-                lock (locker) results = trgtcomp.Evaluate(prms, true, out string[] warns);
-
+                lock (locker)
+                    results = trgtcomp.Evaluate(prms, true, out string[] warns);
+                
                 running = false;
                 complete = true && !interrupt;
                 ticker.Stop();
@@ -127,13 +130,14 @@ namespace GH_Ghost
             }
             RhinoApp.InvokeOnUiThread(new Action<bool>(ExpireSolution), new object[] { true, });
         }
+        
 
         /// <summary>
         /// Registers all the input parameters for this component.
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddGenericParameter("Component", "C", "link up to the single component that needs to run in parallel", GH_ParamAccess.tree);
+            pManager.AddGenericParameter("Component", "C", "link up to a single component that needs to run in parallel\nlink to any output suffices; no data will transfer through here", GH_ParamAccess.tree);
             pManager[0].Optional = true;
         }
 
@@ -152,9 +156,23 @@ namespace GH_Ghost
         /// to store data in output parameters.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
+            string consoletxt = "";
             IGH_Param src;
-            if (Params.Input[0].SourceCount < 1) return;
+            if (Params.Input[0].SourceCount < 1)
+            {
+                // no incoming sources
+                Message = "";
+                return;
+            } 
             else src = Params.Input[0].Sources[0];
+            // check source object upon IO
+            if (srcobj_id != Guid.Empty && (srcobj==null||trgtcomp==null))
+            {
+                srcobj = OnPingDocument().FindObject(srcobj_id, true);
+                string srcname = srcobj.Name.Replace(" ", string.Empty);
+                trgtcomp = Components.FindComponent(srcname);
+                consoletxt += string.Format("\n{0}\n", trgtcomp.Name);
+            }
 
             // test if source instance changed
             if (srcobj == null || srcobj.InstanceGuid != src.Attributes.GetTopLevel.DocObject.InstanceGuid)
@@ -162,15 +180,21 @@ namespace GH_Ghost
                 srcobj = src.Attributes.GetTopLevel.DocObject;
                 string srcname = srcobj.Name.Replace(" ", string.Empty);
                 trgtcomp = Components.FindComponent(srcname);
+                consoletxt += string.Format("\n{0}\n", trgtcomp.Name);
                 if (trgtcomp == null)
                 {
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, " Input is likely either a special component or from a plugin\n Cannot evaluate");
+                    srcobj_id = Guid.Empty; //reset for IO purposes
+                    DA.SetData(0, consoletxt);
+                    Message = ""; // early return resets message
                     return;
                 }
+                // test if component needs to clean up old params
                 if (Params.Input.Count > 1 || Params.Output.Count > 1)
                 {
-                    reparams = true; // this will flip in aftersolve
-                    DA.SetData(0, trgtcomp.Name);
+                    reparams = true; // this will flip back to false in AfterSolve->VarMaintenance
+                    DA.SetData(0, consoletxt);
+                    Message = ""; // early return resets message
                     return; // parameters must be re-setup now so ditch below
                 }
             }
@@ -201,39 +225,73 @@ namespace GH_Ghost
                 param_ins.SetValue(tree, i-1);
             }
 
-            // test eval single thread
-            evaluated = trgtcomp.Evaluate(param_ins, true, out string[] warns);
+            // evaluate
+            if (!running && !complete)
+            {
+                Task.Run(() => GhostEval(param_ins));
+                Message = "Started";
+                interrupt = false;
+            }
+            else if (!running && complete)
+            {
+                complete = false;
+                Message = "Finished";
+                consoletxt += string.Format(
+                    comptime==0?"that thing computed instantly...you really needed me here?":"\nlatest solution took {0}ms",
+                    comptime);
+            }
+            else if (running && !complete)
+            {
+                Message = "Computing";
+                interrupt = true;
+                consoletxt += "\ninterruption detected\nsolution will restart once current task finishes";
+            }
+            else
+            {
+                // shouldn't reach here!
+                running = false;
+                complete = false;
+                interrupt = false;
+                AddRuntimeMessage( GH_RuntimeMessageLevel.Warning, " internal error" );
+            }
             
-
             // set data
+            if (evaluated == null)
+            {
+                DA.SetData(0, consoletxt);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, " no compute data yet\n wait for worker to finish or reset inputs");
+                return;
+            }
             for (int i = 0; i < Params.Output.Count; i++)
             {
                 if (i == 0)
                 {
-                    DA.SetData(0, trgtcomp.Name);
+                    DA.SetData(0, consoletxt);
                     continue;
                 }
-                //TODO: catch null here!
-                var outtree = evaluated[i - 1] as IGH_DataTree;
-                DA.SetDataTree(i, outtree);
+                if (evaluated[i - 1] is IGH_DataTree outtree)
+                    DA.SetDataTree(i, outtree);
             }
         }
 
         protected override void AfterSolveInstance()
         {
-            //base.AfterSolveInstance();
             VariableParameterMaintenance();
-            Params.OnParametersChanged();
+            base.AfterSolveInstance();
         }
 
+        
         #region add or destroy parameters
         public bool CanInsertParameter(GH_ParameterSide side, int i)
         {
             if (srcobj is GH_Component comp)
             {
-                if (side == GH_ParameterSide.Input && i <= comp.Params.Input.Count) return true;
-                else if (side == GH_ParameterSide.Output && i <= comp.Params.Input.Count) return true;
-                else return false;
+                if (side == GH_ParameterSide.Input && i <= comp.Params.Input.Count && i == Params.Input.Count)
+                    return true;
+                else if (side == GH_ParameterSide.Output && i <= comp.Params.Input.Count &&i == Params.Output.Count)
+                    return true;
+                else
+                    return false;
             }
             else return false;
             /*
@@ -283,6 +341,7 @@ namespace GH_Ghost
 
         public void VariableParameterMaintenance()
         {
+            List<IGH_Param> downstream = new List<IGH_Param>();
             if (reparams)
             {
                 // this block deletes all variable params
@@ -291,19 +350,42 @@ namespace GH_Ghost
                 while (Params.Input.Count>1)
                 {
                     Params.Input.Last().Sources.Clear();
-                    Params.UnregisterInputParameter(Params.Input.Last()); // this modifies list length during looping
+                    Params.UnregisterInputParameter(Params.Input.Last(), true); // this modifies list length during looping
                 }
                 while (Params.Output.Count>1)
                 {
+                    //TODO: must unwire somehow!
+                    foreach (var prm in Params.Output.Last().Recipients)
+                        downstream.Add(prm);
                     Params.Output.Last().Recipients.Clear();
-                    Params.UnregisterOutputParameter(Params.Output.Last()); // this modifies list length during looping
+                    Params.UnregisterOutputParameter(Params.Output.Last(), true); // this modifies list length during looping
                 }
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, " Target component reset\n Zoom in to add inputs/outputs again");
             }
-            return;
+            Params.OnParametersChanged();
+
+            // schedule solution so downstream stuff unwire themselves from this
+            if (OnPingDocument() is GH_Document ghdoc)
+                ghdoc.ScheduleSolution(1, delegate {
+                    foreach (var prm in downstream)
+                        prm.RemoveAllSources();
+                });
         }
         #endregion
 
+
+
+        public override bool Write(GH_IWriter writer)
+        {
+            if (srcobj!=null)
+                writer.SetGuid("srcobj_id", srcobj.InstanceGuid);
+            return base.Write(writer);
+        }
+        public override bool Read(GH_IReader reader)
+        {
+            reader.TryGetGuid("srcobj_id", ref srcobj_id);
+            return base.Read(reader);
+        }
 
         /// <summary>
         /// Provides an Icon for every component that will be visible in the User Interface.
