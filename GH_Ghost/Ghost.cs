@@ -14,6 +14,7 @@ using Grasshopper.Plugin;
 using Rhino;
 using Rhino.NodeInCode;
 using GH_IO.Serialization;
+using System.Windows.Forms;
 
 // In order to load the result of this wizard, you will also need to
 // add the output bin/ folder of this project to the list of loaded
@@ -38,16 +39,17 @@ namespace GH_Ghost
         {
         }
 
-        protected bool complete = false; //TODO: serialize these
+        protected bool complete = false;
         protected bool running = false;
         protected bool interrupt = false;
-        protected long comptime;
-        protected string[] workerwarnings = new string[] { };
+        protected bool trigger = false;
 
+        protected string comptime;
+        protected string[] workerwarnings = new string[] { };
         protected bool reparams = false;
         protected ComponentFunctionInfo trgtcomp;
         protected IGH_DocumentObject srcobj;
-        protected Guid srcobj_id = Guid.Empty;
+        protected Guid srcobj_id = Guid.Empty; // for IO only
         protected object[] evaluated;
         
         /// <summary>
@@ -102,12 +104,13 @@ namespace GH_Ghost
             if (prms.Length == 0 || trgtcomp==null)
             {
                 complete = true && !interrupt;
-                lock (locker) comptime = 0;
+                lock (locker) comptime = " 0ms";
             }
             else if (running)
             {
                 // shouldn't ever be here!
                 complete = false;
+                lock (locker) workerwarnings = new string[] { "Somehow a second ghost tried to start a task. It's been stopped.", };
                 return; //skip invoke recompute
             }
             else
@@ -125,13 +128,49 @@ namespace GH_Ghost
                 ticker.Stop();
                 lock (locker)
                 {
-                    comptime = ticker.ElapsedMilliseconds;
+                    comptime = WatchParse(ticker);
                     evaluated = results;
                 }
             }
             RhinoApp.InvokeOnUiThread(new Action<bool>(ExpireSolution), new object[] { true, });
         }
-        
+        /// <summary>
+        /// parse the stopwatch ellapsed time
+        /// </summary>
+        /// <param name="w">stop watch object</param>
+        /// <returns>legible string of the time span</returns>
+        protected string WatchParse(Stopwatch w)
+        {
+            if (w.ElapsedMilliseconds < 1000)
+                return string.Format(" {0}ms", w.ElapsedMilliseconds);
+            else
+            {
+                var h = w.Elapsed.Hours;
+                var m = w.Elapsed.Minutes;
+                var s = w.Elapsed.Seconds;
+                var ms = w.Elapsed.Milliseconds;
+                return string.Format(" {0}{1}{2}",
+                    h == 0 ? "" : h.ToString() + "hrs ",
+                    m == 0 ? "" : m.ToString() + "mins ",
+                    s == 0 ? "" : (s+ms/1000.0).ToString() + "secs"
+                    );
+            }
+        }
+
+        private void OnUnblock(object s, EventArgs e)
+        {
+            trigger = !trigger;
+        }
+        public override void AppendAdditionalMenuItems(ToolStripDropDown menu)
+        {
+            base.AppendAdditionalMenuItems(menu);
+            try
+            {
+                ToolStripMenuItem recomp = menu.Items.Add("Unblock recompute queueing", null, OnUnblock) as ToolStripMenuItem;
+                recomp.Checked = trigger;
+            }
+            catch { }
+        }
 
         /// <summary>
         /// Registers all the input parameters for this component.
@@ -243,7 +282,7 @@ namespace GH_Ghost
                 complete = false; // sets up next solution
                 Message = "Finished";
                 consoletxt += string.Format(
-                    comptime == 0 ? "\n(that thing computed instantly...you really needed me here?)" : "\n(latest solution took {0}ms)",
+                    comptime == " 0ms" ? "\n(that thing computed instantly...you really needed me here?)" : "\n(latest solution took{0})",
                     comptime);
                 try { consoletxt += "\nRuntime warnings >>>\n" + string.Join("\n", workerwarnings); }
                 catch (ArgumentNullException) { }
@@ -252,8 +291,13 @@ namespace GH_Ghost
             else if (running && !complete)
             {
                 Message = "Computing";
-                interrupt = true;
-                consoletxt += "\n(interruption detected\nsolution will restart once current task finishes)";
+                if (trigger)
+                {
+                    interrupt = true;
+                    consoletxt += "\n(interruption detected\nsolution will restart once current task finishes)";
+                }
+                else
+                    consoletxt += "\n(interruption not handled\n unblock queueing in context menu if needed)";
             }
             else
             {
@@ -280,7 +324,7 @@ namespace GH_Ghost
                 }
                 if (evaluated[i - 1] is IGH_DataTree outtree)
                     DA.SetDataTree(i, outtree);
-                else
+                else if (!running)
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, " internal error: worker output data mismatch");
             }
         }
@@ -299,7 +343,7 @@ namespace GH_Ghost
             {
                 if (side == GH_ParameterSide.Input && i <= comp.Params.Input.Count && i == Params.Input.Count)
                     return true;
-                else if (side == GH_ParameterSide.Output && i <= comp.Params.Input.Count &&i == Params.Output.Count)
+                else if (side == GH_ParameterSide.Output && i <= comp.Params.Output.Count && i == Params.Output.Count)
                     return true;
                 else
                     return false;
