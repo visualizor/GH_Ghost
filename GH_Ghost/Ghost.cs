@@ -33,7 +33,7 @@ namespace GH_Ghost
         /// </summary>
         public Ghost()
           : base("Ghost Worker", "GhWkr",
-              "Run a component on another thread from UI\nThat component will still be computed single-threaded",
+              "Run a component on another thread from UI\nTask itself still single-threaded",
               "Maths", "Script")
         {
         }
@@ -42,6 +42,7 @@ namespace GH_Ghost
         protected bool running = false;
         protected bool interrupt = false;
         protected long comptime;
+        protected string[] workerwarnings = new string[] { };
 
         protected bool reparams = false;
         protected ComponentFunctionInfo trgtcomp;
@@ -117,7 +118,7 @@ namespace GH_Ghost
 
                 object[] results; // each should be a tree
                 lock (locker)
-                    results = trgtcomp.Evaluate(prms, true, out string[] warns);
+                    results = trgtcomp.Evaluate(prms, true, out workerwarnings);
                 
                 running = false;
                 complete = true && !interrupt;
@@ -146,7 +147,7 @@ namespace GH_Ghost
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Message", "T", "usefully information", GH_ParamAccess.tree);
+            pManager.AddTextParameter("TextOut", "T", "usefully information", GH_ParamAccess.tree);
         }
 
         /// <summary>
@@ -171,7 +172,10 @@ namespace GH_Ghost
                 srcobj = OnPingDocument().FindObject(srcobj_id, true);
                 string srcname = srcobj.Name.Replace(" ", string.Empty);
                 trgtcomp = Components.FindComponent(srcname);
-                consoletxt += string.Format("\n{0}\n", trgtcomp.Name);
+                if (trgtcomp != null)
+                    consoletxt += string.Format("{0}\n", trgtcomp.Name);
+                else
+                    srcobj = null;
             }
 
             // test if source instance changed
@@ -180,15 +184,15 @@ namespace GH_Ghost
                 srcobj = src.Attributes.GetTopLevel.DocObject;
                 string srcname = srcobj.Name.Replace(" ", string.Empty);
                 trgtcomp = Components.FindComponent(srcname);
-                consoletxt += string.Format("\n{0}\n", trgtcomp.Name);
                 if (trgtcomp == null)
                 {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, " Input is likely either a special component or from a plugin\n Cannot evaluate");
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, " Input is likely either a special component or from a plugin\n Cannot evaluate");
                     srcobj_id = Guid.Empty; //reset for IO purposes
                     DA.SetData(0, consoletxt);
                     Message = ""; // early return resets message
                     return;
                 }
+                consoletxt += string.Format("{0}\n", trgtcomp.Name);
                 // test if component needs to clean up old params
                 if (Params.Input.Count > 1 || Params.Output.Count > 1)
                 {
@@ -198,8 +202,9 @@ namespace GH_Ghost
                     return; // parameters must be re-setup now so ditch below
                 }
             }
-
+            else consoletxt += string.Format("{0}\n", trgtcomp.Name);
             // trgtcomp and srcobj should both have values now
+
             // test if user added all parameters
             if (!(srcobj is GH_Component srccomp))
             {
@@ -228,23 +233,27 @@ namespace GH_Ghost
             // evaluate
             if (!running && !complete)
             {
+                workerwarnings = new string[] { }; // reset message from threaded worker
                 Task.Run(() => GhostEval(param_ins));
                 Message = "Started";
                 interrupt = false;
             }
             else if (!running && complete)
             {
-                complete = false;
+                complete = false; // sets up next solution
                 Message = "Finished";
                 consoletxt += string.Format(
-                    comptime==0?"that thing computed instantly...you really needed me here?":"\nlatest solution took {0}ms",
+                    comptime == 0 ? "\n(that thing computed instantly...you really needed me here?)" : "\n(latest solution took {0}ms)",
                     comptime);
+                try { consoletxt += "\nRuntime warnings >>>\n" + string.Join("\n", workerwarnings); }
+                catch (ArgumentNullException) { }
+                catch (NullReferenceException) { }
             }
             else if (running && !complete)
             {
                 Message = "Computing";
                 interrupt = true;
-                consoletxt += "\ninterruption detected\nsolution will restart once current task finishes";
+                consoletxt += "\n(interruption detected\nsolution will restart once current task finishes)";
             }
             else
             {
@@ -252,7 +261,7 @@ namespace GH_Ghost
                 running = false;
                 complete = false;
                 interrupt = false;
-                AddRuntimeMessage( GH_RuntimeMessageLevel.Warning, " internal error" );
+                AddRuntimeMessage( GH_RuntimeMessageLevel.Error, " internal error\n try recompute with better inputs");
             }
             
             // set data
@@ -271,6 +280,8 @@ namespace GH_Ghost
                 }
                 if (evaluated[i - 1] is IGH_DataTree outtree)
                     DA.SetDataTree(i, outtree);
+                else
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, " internal error: worker output data mismatch");
             }
         }
 
