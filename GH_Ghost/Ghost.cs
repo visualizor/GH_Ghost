@@ -38,11 +38,12 @@ namespace GH_Ghost
               "Maths", "Script")
         {
         }
-
+        public static int Workercount { get; private set; } = 0;
+        
         protected bool complete = false;
         protected bool running = false;
         protected bool interrupt = false;
-        protected bool trigger = false;
+        protected bool trigger = false; // whether to queue next solution
 
         protected string comptime;
         protected string[] workerwarnings = new string[] { };
@@ -101,6 +102,9 @@ namespace GH_Ghost
         protected void GhostEval(object[] prms)
         {
             object locker = new object();
+            lock (locker) Workercount++;
+
+            // actual work in this block
             if (prms.Length == 0 || trgtcomp==null)
             {
                 complete = true && !interrupt;
@@ -131,7 +135,9 @@ namespace GH_Ghost
                     comptime = WatchParse(ticker);
                     evaluated = results;
                 }
-            }
+            } // end works
+
+            lock (locker) Workercount--;
             RhinoApp.InvokeOnUiThread(new Action<bool>(ExpireSolution), new object[] { true, });
         }
         /// <summary>
@@ -325,7 +331,7 @@ namespace GH_Ghost
                 if (evaluated[i - 1] is IGH_DataTree outtree)
                     DA.SetDataTree(i, outtree);
                 else if (!running)
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, " internal error: worker output data mismatch");
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, " no valid result yet");
             }
         }
 
@@ -335,7 +341,16 @@ namespace GH_Ghost
             base.AfterSolveInstance();
         }
 
-        
+        protected override void ExpireDownStreamObjects()
+        {
+            // only expire the message output when thread is running
+            if (!running && complete)
+                base.ExpireDownStreamObjects();
+            else
+                foreach (IGH_Param r in Params.Output[0].Recipients)
+                    r.Attributes.GetTopLevel.DocObject.ExpireSolution(true);
+        }
+
         #region add or destroy parameters
         public bool CanInsertParameter(GH_ParameterSide side, int i)
         {
@@ -432,12 +447,14 @@ namespace GH_Ghost
 
         public override bool Write(GH_IWriter writer)
         {
+            writer.SetBoolean("trigger", trigger);
             if (srcobj!=null)
                 writer.SetGuid("srcobj_id", srcobj.InstanceGuid);
             return base.Write(writer);
         }
         public override bool Read(GH_IReader reader)
         {
+            reader.TryGetBoolean("trigger", ref trigger);
             reader.TryGetGuid("srcobj_id", ref srcobj_id);
             return base.Read(reader);
         }
