@@ -33,12 +33,26 @@ namespace GH_Ghost
         /// new tabs/panels will automatically be created.
         /// </summary>
         public Ghost()
-          : base("Ghost Worker", "GhWkr",
+          : base("Ghost Worker", "Ghost",
               "Run a component on another thread from UI\nTask itself still single-threaded",
               "Maths", "Script")
         {
         }
-        public static int Workercount { get; private set; } = 0;
+
+        public static int WorkerCount { get; private set; } = 0;
+        /* cross thread event bug
+        public static int Workercount
+        {
+            get { return wc; }
+            set
+            {
+                if (value.GetType() == typeof(int) && value >= 0)
+                {
+                    wc = value;
+                    OnWorkerChanged();
+                }
+            }
+        }*/
         
         protected bool complete = false;
         protected bool running = false;
@@ -102,7 +116,7 @@ namespace GH_Ghost
         protected void GhostEval(object[] prms)
         {
             object locker = new object();
-            lock (locker) Workercount++;
+            lock (locker) WorkerCount++;
 
             // actual work in this block
             if (prms.Length == 0 || trgtcomp==null)
@@ -137,7 +151,7 @@ namespace GH_Ghost
                 }
             } // end works
 
-            lock (locker) Workercount--;
+            lock (locker) WorkerCount--;
             RhinoApp.InvokeOnUiThread(new Action<bool>(ExpireSolution), new object[] { true, });
         }
         /// <summary>
@@ -162,6 +176,14 @@ namespace GH_Ghost
                     );
             }
         }
+
+        /* cross thread event bug
+        public delegate void GenericHandler();
+        public static event GenericHandler WorkerChanged = delegate { };
+        protected static void OnWorkerChanged()
+        {
+            WorkerChanged.Invoke();
+        } */
 
         private void OnUnblock(object s, EventArgs e)
         {
@@ -343,12 +365,11 @@ namespace GH_Ghost
 
         protected override void ExpireDownStreamObjects()
         {
-            // only expire the message output when thread is running
             if (!running && complete)
                 base.ExpireDownStreamObjects();
             else
                 foreach (IGH_Param r in Params.Output[0].Recipients)
-                    r.Attributes.GetTopLevel.DocObject.ExpireSolution(true);
+                    r.Attributes.GetTopLevel.DocObject.ExpireSolution(true); // only expire the message output when thread is running
         }
 
         #region add or destroy parameters
