@@ -16,8 +16,10 @@ namespace GH_Ghost
         {
         }
 
-        protected int ct = 0;
-
+        protected void ExpireCallback(GH_Document doc)
+        {
+            ExpireSolution(false);
+        }
 
         /// <summary>
         /// Registers all the input parameters for this component.
@@ -57,14 +59,9 @@ namespace GH_Ghost
                 OnPingDocument().ScheduleSolution(itvl, ExpireCallback);
             }
             
-            DA.SetData(0, ct++);
+            DA.SetData(0, Ghost.WorkerCount);
         }
 
-        protected void ExpireCallback(GH_Document doc)
-        {
-            ExpireSolution(false);
-        }
-        
 
         /// <summary>
         /// Provides an Icon for the component.
@@ -73,7 +70,7 @@ namespace GH_Ghost
         {
             get
             {
-                return null;
+                return Properties.Resources.Buster2;
             }
         }
 
