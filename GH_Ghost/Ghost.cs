@@ -435,8 +435,7 @@ namespace GH_Ghost
             List<IGH_Param> downstream = new List<IGH_Param>();
             if (reparams)
             {
-                // this block deletes all variable params
-
+                // this block deletes all variable params wires
                 reparams = false;
                 while (Params.Input.Count>1)
                 {
@@ -445,7 +444,6 @@ namespace GH_Ghost
                 }
                 while (Params.Output.Count>1)
                 {
-                    //TODO: must unwire somehow!
                     foreach (var prm in Params.Output.Last().Recipients)
                         downstream.Add(prm);
                     Params.Output.Last().Recipients.Clear();
