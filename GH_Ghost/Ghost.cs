@@ -34,7 +34,7 @@ namespace GH_Ghost
         /// </summary>
         public Ghost()
           : base("Ghost Worker", "Ghost",
-              "Run a component on another thread from UI\nTask itself still single-threaded",
+              "Run a component on another thread from UI\nTask itself still single-threaded\nI'm a ghost. My reliability is therefore very ghostly...",
               "Maths", "Script")
         {
         }
@@ -185,10 +185,7 @@ namespace GH_Ghost
             WorkerChanged.Invoke();
         } */
 
-        private void OnUnblock(object s, EventArgs e)
-        {
-            trigger = !trigger;
-        }
+        
         public override void AppendAdditionalMenuItems(ToolStripDropDown menu)
         {
             base.AppendAdditionalMenuItems(menu);
@@ -196,8 +193,34 @@ namespace GH_Ghost
             {
                 ToolStripMenuItem recomp = menu.Items.Add("Unblock recompute queueing", null, OnUnblock) as ToolStripMenuItem;
                 recomp.Checked = trigger;
+
+                ToolStripMenuItem autoparams = menu.Items.Add("Fill Params", null, OnAutoFill) as ToolStripMenuItem;
+                autoparams.Enabled = trgtcomp != null;
             }
             catch { }
+        }
+        private void OnAutoFill(object s, EventArgs e)
+        {
+            if (srcobj is GH_Component src)
+            {
+                for (int i = 0; i < src.Params.Input.Count; i++)
+                {
+                    if (Params.Input.Count > i + 1) continue;
+                    var newparam = CopyParam(src.Params.Input[i]);
+                    Params.RegisterInputParam(newparam, i + 1);
+                }
+                for (int i=0;i<src.Params.Output.Count; i++)
+                {
+                    if (Params.Output.Count > i + 1) continue;
+                    var newparam = CopyParam(src.Params.Output[i]);
+                    Params.RegisterOutputParam(newparam, i + 1);
+                }
+                Params.OnParametersChanged();
+            }
+        }
+        private void OnUnblock(object s, EventArgs e)
+        {
+            trigger = !trigger;
         }
 
         /// <summary>
@@ -461,8 +484,6 @@ namespace GH_Ghost
                 });
         }
         #endregion
-
-
 
         public override bool Write(GH_IWriter writer)
         {
