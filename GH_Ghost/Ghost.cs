@@ -217,6 +217,8 @@ namespace GH_Ghost
                 }
                 Params.OnParametersChanged();
             }
+            Instances.ActiveCanvas.ScheduleRegen(1);
+            ClearRuntimeMessages();
         }
         private void OnUnblock(object s, EventArgs e)
         {
