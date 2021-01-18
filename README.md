@@ -1,5 +1,5 @@
 # GH_Ghost
-a single component that runs other components
+Ghost - a single component that runs other components
 
 Ghost uses `Rhino.NodeInCode` library to evaluate another Grasshopper component internally on a separate thread so Rhino/Grasshopper GUI does not lock up. Link any output of a built-in Grasshopper component to the "C" parameter of Ghost first. Zoom in to add input or output parameters manually to emulate the target component. Or right click on Ghost and select "Fill Params" to auto-populate. Uncheck the "Unblock queueing" option in the context menu to stop automatic recompute when input parameter changes are detected. Otherwise a new solution will immediately start with current input values once old solution completes. 
 
