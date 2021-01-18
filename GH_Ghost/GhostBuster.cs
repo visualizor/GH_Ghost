@@ -35,7 +35,7 @@ namespace GH_Ghost
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddIntegerParameter("Worker Count", "N", "number of ghost workers on separate threads", GH_ParamAccess.item);
+            pManager.AddIntegerParameter("Worker Count", "N", "number of ghost workers on separate threads\nif this number is greater than the number of computing Ghosts on canvas\nit means there is a straggler process that can only be disposed by rhino shutdown", GH_ParamAccess.item);
         }
 
         /// <summary>

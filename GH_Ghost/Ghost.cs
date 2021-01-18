@@ -312,19 +312,19 @@ namespace GH_Ghost
             else if (srccomp.Params.Output.Count != Params.Output.Count - 1)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, " Zoom in to add hidden output parameter(s)");
 
-
-            // get data, it's known now that user has added all missing input parameters
-            object[] param_ins = new object[Params.Input.Count-1];
-            for (int i=0; i < Params.Input.Count; i++)
-            {
-                if (i == 0) continue;
-                DA.GetDataTree(i, out GH_Structure<IGH_Goo> tree);
-                param_ins.SetValue(tree, i-1);
-            }
+            //it's known now that user has added all missing input parameters at this point
 
             // evaluate
             if (!running && !complete)
             {
+                object[] param_ins = new object[Params.Input.Count - 1];
+                for (int i = 0; i < Params.Input.Count; i++)
+                {
+                    if (i == 0) continue;
+                    DA.GetDataTree(i, out GH_Structure<IGH_Goo> tree);
+                    param_ins.SetValue(tree, i - 1);
+                }
+
                 workerwarnings = new string[] { }; // reset message from threaded worker
                 Task.Run(() => GhostEval(param_ins));
                 Message = "Started";
@@ -347,7 +347,7 @@ namespace GH_Ghost
                 if (trigger)
                 {
                     interrupt = true;
-                    consoletxt += "\n(interruption detected\nsolution will restart once current task finishes)";
+                    consoletxt += "\n(interruption detected\nnew solution scheduled)";
                 }
                 else
                     consoletxt += "\n(interruption not handled\n unblock queueing in context menu if needed)";
